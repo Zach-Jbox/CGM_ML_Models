@@ -1,1 +1,1 @@
-# CGM_ML_Models
+This project was created to work on machine learning models that are useful in predicting blood glucose levels from CGM (Continuous Glucose Monitor) data, and create an application in which suggestions can be given on what actions to take for blood glucsoe levels.

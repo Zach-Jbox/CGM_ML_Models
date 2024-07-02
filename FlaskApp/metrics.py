@@ -10,9 +10,10 @@ def calculate_accuracy_metrics(actual, predicted):
     mse = mean_squared_error(actual, predicted)
     rmse = np.sqrt(mse)
     mape = calculate_mape(actual, predicted)
+    
     return {
-        "MAE": mae,
-        "MSE": mse,
-        "RMSE": rmse,
-        "MAPE": mape
+        "MAE": round(mae, 1),
+        "MSE": round(mse, 1),
+        "RMSE": round(rmse, 1),
+        "MAPE": round(mape, 1)
     }

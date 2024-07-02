@@ -1,363 +1,51 @@
 from flask import Flask, jsonify, send_file
-import sqlite3
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential, load_model, model_from_json
-from tensorflow.keras.layers import LSTM, Dense
-import xgboost as xgb
-from datetime import datetime
-import time
-import threading
-import numpy as np
+import sqlite3
 import os
-import joblib
-from pydexcom import Dexcom
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import json
+from database import init_db, DATABASE_PATH
+from tasks import start_background_tasks
+from clarke_error_grid_analysis import clarke_error_grid
+from metrics import calculate_accuracy_metrics
 
 app = Flask(__name__)
 
-# Database initialization and management functions
-def init_db():
-    conn = sqlite3.connect('glucose.db')
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS GLUCOSE_READINGS (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hour INTEGER NOT NULL,
-            minute INTEGER NOT NULL,
-            glucose_level REAL NOT NULL
-        );
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS RF_PREDICTIONS (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hour INTEGER NOT NULL,
-            minute INTEGER NOT NULL,
-            prediction REAL NOT NULL
-        );
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS XGB_PREDICTIONS (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hour INTEGER NOT NULL,
-            minute INTEGER NOT NULL,
-            prediction REAL NOT NULL
-        );
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS LSTM_PREDICTIONS (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hour INTEGER NOT NULL,
-            minute INTEGER NOT NULL,
-            prediction REAL NOT NULL
-        );
-    """)
-    conn.commit()
-    conn.close()
-
 init_db()
+start_background_tasks()
 
-def trim_table(table_name, max_rows=288):
-    conn = sqlite3.connect('glucose.db')
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-    count = cursor.fetchone()[0]
-    if count > max_rows:
-        cursor.execute(f"DELETE FROM {table_name} WHERE id IN (SELECT id FROM {table_name} ORDER BY id ASC LIMIT ?)", (count - max_rows,))
-    conn.commit()
+@app.route('/metrics', methods=['GET'])
+def get_all_metrics():
+    conn = sqlite3.connect(DATABASE_PATH)
+    
+    # Fetch data for Random Forest
+    df_rf = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
+    pred_df_rf = pd.read_sql_query("SELECT prediction FROM RF_PREDICTIONS ORDER BY id DESC LIMIT 288", conn)
+    
+    # Fetch data for XGBoost
+    df_xgb = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
+    pred_df_xgb = pd.read_sql_query("SELECT prediction FROM XGB_PREDICTIONS ORDER BY id DESC LIMIT 288", conn)
+    
+    # Fetch data for LSTM
+    df_lstm = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
+    pred_df_lstm = pd.read_sql_query("SELECT prediction FROM LSTM_PREDICTIONS ORDER BY id DESC LIMIT 288", conn)
+    
     conn.close()
+    
+    if df_rf.empty or pred_df_rf.empty or df_xgb.empty or pred_df_xgb.empty or df_lstm.empty or pred_df_lstm.empty:
+        return jsonify({'error': 'Not enough data for accuracy metrics'})
 
-# Function to add a glucose reading to the database
-def add_glucose_reading(glucose_value):
-    conn = sqlite3.connect('glucose.db')
-    cursor = conn.cursor()
-    now = datetime.now()
-    cursor.execute("INSERT INTO GLUCOSE_READINGS (hour, minute, glucose_level) VALUES (?, ?, ?)",
-                   (now.hour, now.minute, glucose_value))
-    conn.commit()
-    conn.close()
-    print(f"Added glucose reading: hour={now.hour}, minute={now.minute}, glucose_level={glucose_value}")
-    trim_table('GLUCOSE_READINGS')
+    rf_metrics = calculate_accuracy_metrics(df_rf['glucose_level'], pred_df_rf['prediction'])
+    xgb_metrics = calculate_accuracy_metrics(df_xgb['glucose_level'], pred_df_xgb['prediction'])
+    lstm_metrics = calculate_accuracy_metrics(df_lstm['glucose_level'], pred_df_lstm['prediction'])
 
-# Background thread function for Dexcom updates
-def update_glucose_readings():
-    dexcom = Dexcom("Username", "Password")
-    while True:
-        glucose_reading = dexcom.get_current_glucose_reading()
-        add_glucose_reading(glucose_reading.value)
-        print(f"Reading added: {glucose_reading.value} at {datetime.now()}")
-        time.sleep(300)  # Update every 5 minutes
+    return jsonify({
+        'Random Forest': rf_metrics,
+        'XGBoost': xgb_metrics,
+        'LSTM': lstm_metrics
+    })
 
-# Function to save predictions
-def save_prediction(table_name, hour, minute, prediction):
-    conn = sqlite3.connect('glucose.db')
-    cursor = conn.cursor()
-    cursor.execute(f"INSERT INTO {table_name} (hour, minute, prediction) VALUES (?, ?, ?)",
-                   (int(hour), int(minute), float(prediction)))
-    conn.commit()
-    conn.close()
-    print(f"Saved prediction: table={table_name}, hour={hour}, minute={minute}, prediction={prediction}")
-    trim_table(table_name)
-
-# Create dataset function for LSTM
-def create_dataset(X, y, time_steps=1, future_steps=1):
-    Xs, ys = [], []
-    for i in range(len(X) - time_steps - future_steps + 1):
-        v = X[i:(i + time_steps)]
-        Xs.append(v)
-        ys.append(y[i + time_steps + future_steps - 1])
-    return np.array(Xs), np.array(ys)
-
-# Function to create and save the LSTM model
-def create_and_save_lstm_model():
-    conn = sqlite3.connect('glucose.db')
-    df = pd.read_sql_query("SELECT * FROM GLUCOSE_READINGS", conn)
-    conn.close()
-
-    if df.empty:
-        print("No data available to create the LSTM model")
-        return
-
-    scaler = MinMaxScaler()
-    data_scaled = scaler.fit_transform(df[['glucose_level']])
-    time_steps = 10
-    future_steps_2hours = 24
-
-    X_2hours, y_2hours = create_dataset(data_scaled, data_scaled, time_steps, future_steps_2hours)
-    if X_2hours.size == 0 or y_2hours.size == 0:
-        print("Not enough data to create the LSTM dataset")
-        return
-
-    model_path = 'lstm_model_2hours.h5'
-    model_json_path = 'lstm_model_2hours.json'
-    X_train_2hours, X_test_2hours, y_train_2hours, y_test_2hours = train_test_split(X_2hours, y_2hours, test_size=0.2, shuffle=False)
-    model_2hours = Sequential()
-    model_2hours.add(LSTM(units=64, input_shape=(X_train_2hours.shape[1], X_train_2hours.shape[2]), time_major=False))
-    model_2hours.add(Dense(units=1))
-    model_2hours.compile(optimizer='adam', loss='mean_squared_error')
-    model_2hours.fit(X_train_2hours, y_train_2hours, epochs=100, batch_size=32, validation_split=0.2)
-    model_2hours.save(model_path)
-
-    # Save model configuration
-    with open(model_json_path, 'w') as json_file:
-        json_file.write(model_2hours.to_json())
-
-    print(f"LSTM model saved to {model_path} and configuration saved to {model_json_path}")
-
-def clean_model_json(json_path):
-    with open(json_path, "r") as file:
-        model_json = json.load(file)
-
-    for layer in model_json['config']['layers']:
-        if layer['class_name'] == 'LSTM' and 'time_major' in layer['config']:
-            del layer['config']['time_major']
-
-    with open(json_path, "w") as file:
-        json.dump(model_json, file)
-
-# Replace this path with the actual path to your model JSON file
-model_json_path = "lstm_model_2hours.json"
-clean_model_json(model_json_path)
-
-# Function to load the LSTM model with `time_major` argument
-def load_lstm_model(model_path, model_json_path):
-    with open(model_json_path, 'r') as json_file:
-        model_json = json_file.read()
-
-    model_2hours = model_from_json(model_json, custom_objects={'LSTM': LSTM, 'Sequential' : Sequential})
-    model_2hours.load_weights(model_path)
-    return model_2hours
-
-# Function to generate and save the graphs
-def generate_graph(model, actual_data, predicted_data, file_path):
-    plt.figure()
-    plt.plot(range(len(actual_data)), actual_data, label='Actual Data')
-    plt.plot(range(len(predicted_data)), predicted_data, label='Predicted Data')
-    plt.xlabel('Time')
-    plt.ylabel('Glucose Level')
-    plt.title(f'{model.upper()} Predictions vs Actual')
-    plt.legend()
-    plt.savefig(file_path)
-    plt.close()
-
-    # Debugging: Print data being plotted
-    print(f"Graph generated for model: {model}")
-    print(f"Actual data: {actual_data}")
-    print(f"Predicted data: {predicted_data}")
-
-# Function to update Random Forest predictions
-def update_rf_predictions():
-    while True:
-        conn = sqlite3.connect('glucose.db')
-        df = pd.read_sql_query("SELECT * FROM GLUCOSE_READINGS", conn)
-        conn.close()
-
-        if df.empty:
-            print("No data available for Random Forest prediction")
-            time.sleep(300)
-            continue
-
-        df['hour'] = df['hour'].astype(int)
-        df['minute'] = df['minute'].astype(int)
-
-        # Log data for debugging
-        print("Training data for Random Forest:")
-        print(df.tail())
-
-        model_path = 'random_forest_model.pkl'
-        rf_model = RandomForestRegressor(n_estimators=100, random_state=0)
-        rf_model.fit(df[['hour', 'minute']], df['glucose_level'])
-        joblib.dump(rf_model, model_path)
-
-        next_hour = (df['hour'].iloc[-1] + (df['minute'].iloc[-1] + 30) // 60) % 24
-        next_minute = (df['minute'].iloc[-1] + 30) % 60
-        next_data_point = pd.DataFrame([[next_hour, next_minute]], columns=['hour', 'minute'])
-        prediction = rf_model.predict(next_data_point)
-        rounded_prediction = int(round(prediction[0]))
-        save_prediction("RF_PREDICTIONS", next_hour, next_minute, rounded_prediction)
-        print(f"RF prediction: {rounded_prediction} for time {next_hour}:{next_minute}")
-        time.sleep(300)  # Update every 5 minutes
-
-# Function to update XGBoost predictions
-def update_xgb_predictions():
-    while True:
-        conn = sqlite3.connect('glucose.db')
-        df = pd.read_sql_query("SELECT * FROM GLUCOSE_READINGS", conn)
-        conn.close()
-
-        if df.empty:
-            print("No data available for XGBoost prediction")
-            time.sleep(300)
-            continue
-
-        df['hour'] = df['hour'].astype(int)
-        df['minute'] = df['minute'].astype(int)
-
-        # Log data for debugging
-        print("Training data for XGBoost:")
-        print(df.tail())
-
-        model_path = 'xgboost_model.pkl'
-        X_train, X_test, y_train, y_test = train_test_split(df[['hour', 'minute']], df['glucose_level'], test_size=0.2, random_state=42)
-        model = xgb.XGBRegressor()
-        model.fit(X_train, y_train)
-        joblib.dump(model, model_path)
-
-        next_hour = (df['hour'].iloc[-1] + (df['minute'].iloc[-1] + 30) // 60) % 24
-        next_minute = (df['minute'].iloc[-1] + 30) % 60
-        next_data_point = pd.DataFrame([[next_hour, next_minute]], columns=['hour', 'minute'])
-        prediction = model.predict(next_data_point)
-        rounded_prediction = int(round(prediction[0]))
-        save_prediction("XGB_PREDICTIONS", next_hour, next_minute, rounded_prediction)
-        print(f"XGB prediction: {rounded_prediction} for time {next_hour}:{next_minute}")
-        time.sleep(300)  # Update every 5 minutes
-
-# Function to update LSTM predictions
-def update_lstm_predictions():
-    while True:
-        conn = sqlite3.connect('glucose.db')
-        df = pd.read_sql_query("SELECT * FROM GLUCOSE_READINGS", conn)
-        conn.close()
-
-        if df.empty:
-            print("No data available for LSTM prediction")
-            time.sleep(300)
-            continue
-
-        scaler = MinMaxScaler()
-        data_scaled = scaler.fit_transform(df[['glucose_level']])
-        time_steps = 10
-        future_steps_2hours = 24
-
-        X_2hours, y_2hours = create_dataset(data_scaled, data_scaled, time_steps, future_steps_2hours)
-        if X_2hours.size == 0 or y_2hours.size == 0:
-            print("Not enough data to create the LSTM dataset")
-            time.sleep(300)
-            continue
-
-        model_path = 'lstm_model_2hours.h5'
-        model_json_path = 'lstm_model_2hours.json'
-        if not os.path.exists(model_path) or not os.path.exists(model_json_path):
-            print(f"LSTM model file not found: {model_path}")
-            create_and_save_lstm_model()
-
-        model_2hours = load_lstm_model(model_path, model_json_path)
-
-        X_pred_2hours = np.array([data_scaled[-time_steps:]])
-        y_pred_2hours = model_2hours.predict(X_pred_2hours)
-        y_pred_rescaled_2hours = scaler.inverse_transform(y_pred_2hours.reshape(-1, 1))
-        rounded_prediction = int(round(y_pred_rescaled_2hours[0][0]))
-
-        last_hour = df['hour'].iloc[-1]
-        last_minute = df['minute'].iloc[-1]
-        next_hour = (last_hour + (last_minute + 120) // 60) % 24
-        next_minute = (last_minute + 120) % 60
-
-        save_prediction("LSTM_PREDICTIONS", next_hour, next_minute, rounded_prediction)
-        time.sleep(300)  # Update every 5 minutes
-
-# Function to update the graphs
-def update_graphs():
-    while True:
-        conn = sqlite3.connect('glucose.db')
-
-        # Fetch actual data
-        df_actual = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id", conn)
-
-        # Fetch predictions
-        rf_pred = pd.read_sql_query("SELECT prediction FROM RF_PREDICTIONS ORDER BY id", conn)
-        xgb_pred = pd.read_sql_query("SELECT prediction FROM XGB_PREDICTIONS ORDER BY id", conn)
-        lstm_pred = pd.read_sql_query("SELECT prediction FROM LSTM_PREDICTIONS ORDER BY id", conn)
-
-        conn.close()
-
-        if df_actual.empty or rf_pred.empty or xgb_pred.empty or lstm_pred.empty:
-            print("No data available for generating graphs")
-            time.sleep(300)
-            continue
-
-        # Convert data to lists for plotting
-        actual_data = df_actual['glucose_level'].tolist()
-        rf_predictions = rf_pred['prediction'].tolist()
-        xgb_predictions = xgb_pred['prediction'].tolist()
-        lstm_predictions = lstm_pred['prediction'].tolist()
-
-        # Generate and save the graphs
-        generate_graph('rf', actual_data, rf_predictions, 'rf_predictions_vs_actual.png')
-        generate_graph('xgb', actual_data, xgb_predictions, 'xgb_predictions_vs_actual.png')
-        generate_graph('lstm', actual_data, lstm_predictions, 'lstm_predictions_vs_actual.png')
-
-        time.sleep(300)  # Update every 5 minutes
-
-# Start background threads for prediction updates
-rf_thread = threading.Thread(target=update_rf_predictions)
-xgb_thread = threading.Thread(target=update_xgb_predictions)
-lstm_thread = threading.Thread(target=update_lstm_predictions)
-update_thread = threading.Thread(target=update_glucose_readings)
-graph_thread = threading.Thread(target=update_graphs)
-
-
-rf_thread.daemon = True
-xgb_thread.daemon = True
-lstm_thread.daemon = True
-update_thread.daemon = True
-graph_thread.daemon = True
-graph_thread.start()
-
-rf_thread.start()
-xgb_thread.start()
-lstm_thread.start()
-update_thread.start()
-
-# Flask routes for retrieving the latest predictions
 @app.route('/predict_random_forest', methods=['GET'])
 def predict_random_forest():
-    conn = sqlite3.connect('glucose.db')
+    conn = sqlite3.connect(DATABASE_PATH)
     df = pd.read_sql_query("SELECT * FROM RF_PREDICTIONS ORDER BY id DESC LIMIT 1", conn)
     conn.close()
 
@@ -369,7 +57,7 @@ def predict_random_forest():
 
 @app.route('/predict_xgboost', methods=['GET'])
 def predict_xgboost():
-    conn = sqlite3.connect('glucose.db')
+    conn = sqlite3.connect(DATABASE_PATH)
     df = pd.read_sql_query("SELECT * FROM XGB_PREDICTIONS ORDER BY id DESC LIMIT 1", conn)
     conn.close()
 
@@ -381,7 +69,7 @@ def predict_xgboost():
 
 @app.route('/predict_lstm', methods=['GET'])
 def predict_lstm():
-    conn = sqlite3.connect('glucose.db')
+    conn = sqlite3.connect(DATABASE_PATH)
     df = pd.read_sql_query("SELECT * FROM LSTM_PREDICTIONS ORDER BY id DESC LIMIT 1", conn)
     conn.close()
 
@@ -391,7 +79,38 @@ def predict_lstm():
     latest_prediction = df.iloc[0]
     return jsonify({'predicted_glucose_2hours': latest_prediction['prediction']})
 
-# Flask route for serving graphs
+@app.route('/clarke_error_grid/rf', methods=['GET'])
+def clarke_error_grid_rf():
+    conn = sqlite3.connect(DATABASE_PATH)
+    df = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
+    pred_df = pd.read_sql_query("SELECT prediction FROM RF_PREDICTIONS ORDER BY id DESC LIMIT 288", conn)
+    conn.close()
+
+    if df.empty or pred_df.empty:
+        return jsonify({'error': 'Not enough data for Clarke Error Grid analysis'})
+
+    plt, zone_counts = clarke_error_grid(df['glucose_level'], pred_df['prediction'], "Random Forest")
+    plt.savefig('clarke_error_grid_rf.png')
+    plt.close()
+
+    return send_file('clarke_error_grid_rf.png', mimetype='image/png')
+
+@app.route('/clarke_error_grid/xgb', methods=['GET'])
+def clarke_error_grid_xgb():
+    conn = sqlite3.connect(DATABASE_PATH)
+    df = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
+    pred_df = pd.read_sql_query("SELECT prediction FROM XGB_PREDICTIONS ORDER BY id DESC LIMIT 288", conn)
+    conn.close()
+
+    if df.empty or pred_df.empty:
+        return jsonify({'error': 'Not enough data for Clarke Error Grid analysis'})
+
+    plt, zone_counts = clarke_error_grid(df['glucose_level'], pred_df['prediction'], "XGBoost")
+    plt.savefig('clarke_error_grid_xgb.png')
+    plt.close()
+
+    return send_file('clarke_error_grid_xgb.png', mimetype='image/png')
+
 @app.route('/graph/<model>', methods=['GET'])
 def get_graph(model):
     valid_models = ['rf', 'xgb', 'lstm']
@@ -404,10 +123,9 @@ def get_graph(model):
     else:
         return jsonify({'error': 'Invalid model'}), 400
 
-# Flask route for fetching current glucose level and status
 @app.route('/current_glucose', methods=['GET'])
 def current_glucose():
-    conn = sqlite3.connect('glucose.db')
+    conn = sqlite3.connect(DATABASE_PATH)
     df = pd.read_sql_query("SELECT * FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 1", conn)
     conn.close()
 

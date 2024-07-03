@@ -3,6 +3,8 @@ package com.example.mastersproject
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -14,6 +16,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var currentGlucoseTextView: TextView
     private lateinit var statusTextView: TextView
+    private val handler = Handler(Looper.getMainLooper())
+    private val updateInterval: Long = 6000 // 1 minute in milliseconds
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -23,6 +27,7 @@ class MainActivity : AppCompatActivity() {
         statusTextView = findViewById(R.id.status)
 
         fetchCurrentGlucose()
+        startRepeatingTask()
 
         findViewById<Button>(R.id.random_forest_button).setOnClickListener {
             startActivity(Intent(this, RandomForestActivity::class.java))
@@ -34,6 +39,10 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.lstm_button).setOnClickListener {
             startActivity(Intent(this, LSTMActivity::class.java))
+        }
+
+        findViewById<Button>(R.id.metrics_button).setOnClickListener {
+            startActivity(Intent(this, MetricsActivity::class.java))
         }
     }
 
@@ -58,7 +67,7 @@ class MainActivity : AppCompatActivity() {
 
                         runOnUiThread {
                             currentGlucoseTextView.text = "Current Glucose: $glucoseLevel"
-                            statusTextView.text = "Status: $status"
+                            statusTextView.text = "$status"
 
                             when (status) {
                                 "High" -> statusTextView.setTextColor(Color.parseColor("#FFA500"))
@@ -70,5 +79,19 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    private fun startRepeatingTask() {
+        handler.postDelayed(object : Runnable {
+            override fun run() {
+                fetchCurrentGlucose()
+                handler.postDelayed(this, updateInterval)
+            }
+        }, updateInterval)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        handler.removeCallbacksAndMessages(null)
     }
 }

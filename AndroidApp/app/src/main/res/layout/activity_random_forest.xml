@@ -1,27 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:padding="16dp">
+    android:padding="16dp"
+    android:fillViewport="true">
 
-    <TextView
-        android:id="@+id/prediction_text_view"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Prediction will be shown here"
-        android:textSize="18sp" />
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center">
 
-    <ImageView
-        android:id="@+id/graph_image_view"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:contentDescription="Prediction Graph" />
+        <TextView
+            android:id="@+id/prediction_text_view"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="24sp" />
 
-    <Button
-        android:id="@+id/back_button"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Back to Home" />
-</LinearLayout>
+        <ImageView
+            android:id="@+id/graph_image_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scaleType="fitCenter"
+            android:layout_marginTop="16dp" />
+
+        <ImageView
+            android:id="@+id/clarke_error_grid_image_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scaleType="fitCenter"
+            android:layout_marginTop="16dp" />
+
+        <Button
+            android:id="@+id/back_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Back to Home"
+            android:layout_marginTop="16dp"
+            android:backgroundTint="@color/purple_500" />
+    </LinearLayout>
+</ScrollView>

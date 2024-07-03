@@ -11,7 +11,8 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             hour INTEGER NOT NULL,
             minute INTEGER NOT NULL,
-            glucose_level REAL NOT NULL
+            glucose_level REAL NOT NULL,
+            UNIQUE(hour, minute)  -- Add a unique constraint on hour and minute
         );
     """)
     cursor.execute("""
@@ -55,11 +56,21 @@ def add_glucose_reading(glucose_value):
     conn = sqlite3.connect(DATABASE_PATH)
     cursor = conn.cursor()
     now = datetime.now()
-    cursor.execute("INSERT INTO GLUCOSE_READINGS (hour, minute, glucose_level) VALUES (?, ?, ?)",
-                   (now.hour, now.minute, glucose_value))
+
+    # Check if the entry already exists
+    cursor.execute("SELECT * FROM GLUCOSE_READINGS WHERE hour = ? AND minute = ?", (now.hour, now.minute))
+    existing_entry = cursor.fetchone()
+
+    if existing_entry:
+        # Update the existing entry
+        cursor.execute("UPDATE GLUCOSE_READINGS SET glucose_level = ? WHERE hour = ? AND minute = ?", (glucose_value, now.hour, now.minute))
+    else:
+        # Insert a new entry
+        cursor.execute("INSERT INTO GLUCOSE_READINGS (hour, minute, glucose_level) VALUES (?, ?, ?)", (now.hour, now.minute, glucose_value))
+    
     conn.commit()
     conn.close()
-    print(f"Added glucose reading: hour={now.hour}, minute={now.minute}, glucose_level={glucose_value}")
+    print(f"Added or updated glucose reading: hour={now.hour}, minute={now.minute}, glucose_level={glucose_value}")
     trim_table('GLUCOSE_READINGS')
 
 def save_prediction(table_name, hour, minute, prediction):

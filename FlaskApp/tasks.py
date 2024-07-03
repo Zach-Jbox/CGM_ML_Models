@@ -11,7 +11,7 @@ def update_glucose_readings():
         glucose_reading = dexcom.get_current_glucose_reading()
         add_glucose_reading(glucose_reading.value)
         print(f"Reading added: {glucose_reading.value} at {datetime.now()}")
-        time.sleep(300)
+        time.sleep(300)  # Sleep for 5 minutes before the next reading
 
 def start_background_tasks():
     rf_thread = threading.Thread(target=update_rf_predictions)

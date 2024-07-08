@@ -1,17 +1,15 @@
 from sklearn.ensemble import RandomForestRegressor
 import xgboost as xgb
-from tensorflow.keras.models import Sequential, load_model, model_from_json
+from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 import joblib
 import pandas as pd
 import numpy as np
-import os
-import json
 import sqlite3
+import os
 import time
-from config import MODEL_PATHS
 from config import DATABASE_PATH
 from database import fetch_data_for_model_training, save_prediction
 from utils import generate_graph
@@ -36,10 +34,9 @@ def update_rf_predictions():
         df['hour'] = df['hour'].astype(int)
         df['minute'] = df['minute'].astype(int)
 
-        model_path = MODEL_PATHS['random_forest']
         rf_model = RandomForestRegressor(n_estimators=100, random_state=0)
         rf_model.fit(df[['hour', 'minute']], df['glucose_level'])
-        joblib.dump(rf_model, model_path)
+        joblib.dump(rf_model, 'random_forest_model.pkl')
 
         next_hour = (df['hour'].iloc[-1] + (df['minute'].iloc[-1] + 30) // 60) % 24
         next_minute = (df['minute'].iloc[-1] + 30) % 60
@@ -61,11 +58,10 @@ def update_xgb_predictions():
         df['hour'] = df['hour'].astype(int)
         df['minute'] = df['minute'].astype(int)
 
-        model_path = MODEL_PATHS['xgboost']
         X_train, X_test, y_train, y_test = train_test_split(df[['hour', 'minute']], df['glucose_level'], test_size=0.2, random_state=42)
         model = xgb.XGBRegressor()
         model.fit(X_train, y_train)
-        joblib.dump(model, model_path)
+        joblib.dump(model, 'xgboost_model.pkl')
 
         next_hour = (df['hour'].iloc[-1] + (df['minute'].iloc[-1] + 30) // 60) % 24
         next_minute = (df['minute'].iloc[-1] + 30) % 60
@@ -95,13 +91,12 @@ def update_lstm_predictions():
             time.sleep(300)
             continue
 
-        model_path = MODEL_PATHS['lstm']
-        model_json_path = MODEL_PATHS['lstm_json']
-        if not os.path.exists(model_path) or not os.path.exists(model_json_path):
+        model_path = 'lstm_model_2hours.h5'
+        if not os.path.exists(model_path):
             print(f"LSTM model file not found: {model_path}")
             create_and_save_lstm_model()
 
-        model_2hours = load_lstm_model(model_path, model_json_path)
+        model_2hours = load_model(model_path)
 
         X_pred_2hours = np.array([data_scaled[-time_steps:]])
         y_pred_2hours = model_2hours.predict(X_pred_2hours)
@@ -132,26 +127,13 @@ def create_and_save_lstm_model():
         print("Not enough data to create the LSTM dataset")
         return
 
-    model_path = MODEL_PATHS['lstm']
-    model_json_path = MODEL_PATHS['lstm_json']
     X_train_2hours, X_test_2hours, y_train_2hours, y_test_2hours = train_test_split(X_2hours, y_2hours, test_size=0.2, shuffle=False)
     model_2hours = Sequential()
     model_2hours.add(LSTM(units=64, input_shape=(X_train_2hours.shape[1], X_train_2hours.shape[2])))
     model_2hours.add(Dense(units=1))
     model_2hours.compile(optimizer='adam', loss='mean_squared_error')
     model_2hours.fit(X_train_2hours, y_train_2hours, epochs=100, batch_size=32, validation_split=0.2)
-    model_2hours.save(model_path)
-
-    with open(model_json_path, 'w') as json_file:
-        json_file.write(model_2hours.to_json())
-
-def load_lstm_model(model_path, model_json_path):
-    with open(model_json_path, 'r') as json_file:
-        model_json = json_file.read()
-
-    model_2hours = model_from_json(model_json, custom_objects={'LSTM': LSTM})
-    model_2hours.load_weights(model_path)
-    return model_2hours
+    model_2hours.save('lstm_model_2hours.h5')
 
 def update_graphs():
     while True:

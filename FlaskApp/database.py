@@ -76,16 +76,32 @@ def add_glucose_reading(glucose_value):
 def save_prediction(table_name, hour, minute, prediction):
     conn = sqlite3.connect(DATABASE_PATH)
     cursor = conn.cursor()
-    cursor.execute(f"INSERT INTO {table_name} (hour, minute, prediction) VALUES (?, ?, ?)",
-                   (int(hour), int(minute), float(prediction)))
-    conn.commit()
+    
+    # Check if a prediction for the given hour and minute already exists
+    cursor.execute(f"SELECT * FROM {table_name} WHERE hour = ? AND minute = ?", (int(hour), int(minute)))
+    existing_prediction = cursor.fetchone()
+    
+    if existing_prediction is None:
+        cursor.execute(f"INSERT INTO {table_name} (hour, minute, prediction) VALUES (?, ?, ?)",
+                       (int(hour), int(minute), float(prediction)))
+        conn.commit()
+        print(f"Saved prediction: table={table_name}, hour={hour}, minute={minute}, prediction={prediction}")
+    else:
+        print(f"Prediction for {hour}:{minute} already exists in {table_name} table.")
+    
     conn.close()
-    print(f"Saved prediction: table={table_name}, hour={hour}, minute={minute}, prediction={prediction}")
     trim_table(table_name)
 
 def fetch_data_for_model_training():
     conn = sqlite3.connect(DATABASE_PATH)
     df = pd.read_sql_query("SELECT * FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 864", conn)
+    conn.close()
+    df = df.iloc[::-1].reset_index(drop=True)  # Reverse to keep the chronological order
+    return df
+
+def fetch_data_for_model_training_lstm():
+    conn = sqlite3.connect(DATABASE_PATH)
+    df = pd.read_sql_query("SELECT * FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
     conn.close()
     df = df.iloc[::-1].reset_index(drop=True)  # Reverse to keep the chronological order
     return df

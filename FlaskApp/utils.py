@@ -3,16 +3,20 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 
-def generate_graph(model, actual_data, predicted_data, file_path):
+def generate_graph(model, actual_data, predicted_data, file_path, offset=0):
     # Convert lists to pandas Series if necessary
     if isinstance(actual_data, list):
         actual_data = pd.Series(actual_data)
     if isinstance(predicted_data, list):
         predicted_data = pd.Series(predicted_data)
 
-    # Ensure data is only the last 288 points
-    actual_data = actual_data[-288:].reset_index(drop=True)
-    predicted_data = predicted_data[-288:].reset_index(drop=True)
+    # Adjust for offset
+    actual_data = actual_data[offset:].reset_index(drop=True)
+    predicted_data = predicted_data[:len(predicted_data) - offset].reset_index(drop=True)
+
+    # Ensure data is only the last 288 points for plotting
+    actual_data = actual_data[-288:]
+    predicted_data = predicted_data[-288:]
 
     # Generate simple indices for the x-axis
     indices = range(len(actual_data))

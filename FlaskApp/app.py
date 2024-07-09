@@ -42,6 +42,10 @@ def get_all_metrics():
         'XGBoost': xgb_metrics,
         'LSTM': lstm_metrics
     })
+    
+@app.route('/')
+def home():
+    return jsonify(message="Welcome to the Glucose Prediction App")
 
 @app.route('/predict_random_forest', methods=['GET'])
 def predict_random_forest():

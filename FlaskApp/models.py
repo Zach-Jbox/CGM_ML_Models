@@ -11,7 +11,7 @@ import sqlite3
 import os
 import time
 from config import DATABASE_PATH
-from database import fetch_data_for_model_training, save_prediction
+from database import fetch_data_for_model_training, save_prediction, fetch_data_for_model_training_lstm
 from utils import generate_graph
 
 def create_dataset(X, y, time_steps=1, future_steps=1):
@@ -22,12 +22,18 @@ def create_dataset(X, y, time_steps=1, future_steps=1):
         ys.append(y[i + time_steps + future_steps - 1])
     return np.array(Xs), np.array(ys)
 
+def fetch_data_for_model_training_lstm():
+    conn = sqlite3.connect(DATABASE_PATH)
+    df = pd.read_sql_query("SELECT * FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
+    conn.close()
+    df = df.iloc[::-1].reset_index(drop=True)  # Reverse to keep the chronological order
+    return df
+
 def update_rf_predictions():
     while True:
         df = fetch_data_for_model_training()
 
         if df.empty:
-            print("No data available for Random Forest prediction")
             time.sleep(300)
             continue
 
@@ -51,7 +57,6 @@ def update_xgb_predictions():
         df = fetch_data_for_model_training()
 
         if df.empty:
-            print("No data available for XGBoost prediction")
             time.sleep(300)
             continue
 
@@ -73,10 +78,9 @@ def update_xgb_predictions():
 
 def update_lstm_predictions():
     while True:
-        df = fetch_data_for_model_training()
+        df = fetch_data_for_model_training_lstm()
 
         if df.empty:
-            print("No data available for LSTM prediction")
             time.sleep(300)
             continue
 
@@ -87,13 +91,11 @@ def update_lstm_predictions():
 
         X_2hours, y_2hours = create_dataset(data_scaled, data_scaled, time_steps, future_steps_2hours)
         if X_2hours.size == 0 or y_2hours.size == 0:
-            print("Not enough data to create the LSTM dataset")
             time.sleep(300)
             continue
 
         model_path = 'lstm_model_2hours.h5'
         if not os.path.exists(model_path):
-            print(f"LSTM model file not found: {model_path}")
             create_and_save_lstm_model()
 
         model_2hours = load_model(model_path)
@@ -112,9 +114,8 @@ def update_lstm_predictions():
         time.sleep(300)
 
 def create_and_save_lstm_model():
-    df = fetch_data_for_model_training()
+    df = fetch_data_for_model_training_lstm()
     if df.empty:
-        print("No data available to create the LSTM model")
         return
 
     scaler = MinMaxScaler()
@@ -124,7 +125,6 @@ def create_and_save_lstm_model():
 
     X_2hours, y_2hours = create_dataset(data_scaled, data_scaled, time_steps, future_steps_2hours)
     if X_2hours.size == 0 or y_2hours.size == 0:
-        print("Not enough data to create the LSTM dataset")
         return
 
     X_train_2hours, X_test_2hours, y_train_2hours, y_test_2hours = train_test_split(X_2hours, y_2hours, test_size=0.2, shuffle=False)
@@ -150,7 +150,6 @@ def update_graphs():
         conn.close()
 
         if df_actual.empty or rf_pred.empty or xgb_pred.empty or lstm_pred.empty:
-            print("No data available for generating graphs")
             time.sleep(300)
             continue
 

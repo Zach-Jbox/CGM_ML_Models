@@ -10,13 +10,9 @@ def generate_graph(model, actual_data, predicted_data, file_path, offset=0):
     if isinstance(predicted_data, list):
         predicted_data = pd.Series(predicted_data)
 
-    # Adjust for offset
-    actual_data = actual_data[offset:].reset_index(drop=True)
-    predicted_data = predicted_data[:len(predicted_data) - offset].reset_index(drop=True)
-
-    # Ensure data is only the last 288 points for plotting
-    actual_data = actual_data[-288:]
-    predicted_data = predicted_data[-288:]
+    # Ensure data is only the last 288 points
+    actual_data = actual_data[-288:].reset_index(drop=True)
+    predicted_data = predicted_data[-(288 + offset):-offset if offset != 0 else None].reset_index(drop=True)
 
     # Generate simple indices for the x-axis
     indices = range(len(actual_data))

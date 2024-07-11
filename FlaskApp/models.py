@@ -22,13 +22,6 @@ def create_dataset(X, y, time_steps=1, future_steps=1):
         ys.append(y[i + time_steps + future_steps - 1])
     return np.array(Xs), np.array(ys)
 
-def fetch_data_for_model_training_lstm():
-    conn = sqlite3.connect(DATABASE_PATH)
-    df = pd.read_sql_query("SELECT * FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
-    conn.close()
-    df = df.iloc[::-1].reset_index(drop=True)  # Reverse to keep the chronological order
-    return df
-
 def update_rf_predictions():
     while True:
         df = fetch_data_for_model_training()
@@ -39,6 +32,7 @@ def update_rf_predictions():
 
         df['hour'] = df['hour'].astype(int)
         df['minute'] = df['minute'].astype(int)
+        df['date'] = pd.to_datetime(df['date'])
 
         rf_model = RandomForestRegressor(n_estimators=100, random_state=0)
         rf_model.fit(df[['hour', 'minute']], df['glucose_level'])
@@ -46,10 +40,12 @@ def update_rf_predictions():
 
         next_hour = (df['hour'].iloc[-1] + (df['minute'].iloc[-1] + 30) // 60) % 24
         next_minute = (df['minute'].iloc[-1] + 30) % 60
+        next_date = (df['date'].iloc[-1] + pd.Timedelta(minutes=30)).strftime("%Y-%m-%d")
+
         next_data_point = pd.DataFrame([[next_hour, next_minute]], columns=['hour', 'minute'])
         prediction = rf_model.predict(next_data_point)
         rounded_prediction = int(round(prediction[0]))
-        save_prediction("RF_PREDICTIONS", next_hour, next_minute, rounded_prediction)
+        save_prediction("RF_PREDICTIONS", next_date, next_hour, next_minute, rounded_prediction)
         time.sleep(300)
 
 def update_xgb_predictions():
@@ -62,6 +58,7 @@ def update_xgb_predictions():
 
         df['hour'] = df['hour'].astype(int)
         df['minute'] = df['minute'].astype(int)
+        df['date'] = pd.to_datetime(df['date'])
 
         X_train, X_test, y_train, y_test = train_test_split(df[['hour', 'minute']], df['glucose_level'], test_size=0.2, random_state=42)
         model = xgb.XGBRegressor()
@@ -70,10 +67,12 @@ def update_xgb_predictions():
 
         next_hour = (df['hour'].iloc[-1] + (df['minute'].iloc[-1] + 30) // 60) % 24
         next_minute = (df['minute'].iloc[-1] + 30) % 60
+        next_date = (df['date'].iloc[-1] + pd.Timedelta(minutes=30)).strftime("%Y-%m-%d")
+
         next_data_point = pd.DataFrame([[next_hour, next_minute]], columns=['hour', 'minute'])
         prediction = model.predict(next_data_point)
         rounded_prediction = int(round(prediction[0]))
-        save_prediction("XGB_PREDICTIONS", next_hour, next_minute, rounded_prediction)
+        save_prediction("XGB_PREDICTIONS", next_date, next_hour, next_minute, rounded_prediction)
         time.sleep(300)
 
 def update_lstm_predictions():
@@ -109,8 +108,9 @@ def update_lstm_predictions():
         last_minute = df['minute'].iloc[-1]
         next_hour = (last_hour + (last_minute + 120) // 60) % 24
         next_minute = (last_minute + 120) % 60
+        next_date = (df['date'].iloc[-1] + pd.Timedelta(minutes=120)).strftime("%Y-%m-%d")
 
-        save_prediction("LSTM_PREDICTIONS", next_hour, next_minute, rounded_prediction)
+        save_prediction("LSTM_PREDICTIONS", next_date, next_hour, next_minute, rounded_prediction)
         time.sleep(300)
 
 def create_and_save_lstm_model():

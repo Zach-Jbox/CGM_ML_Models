@@ -3,9 +3,11 @@ import pandas as pd
 import sqlite3
 import os
 from database import init_db, DATABASE_PATH
+import tasks
 from tasks import start_background_tasks
 from clarke_error_grid_analysis import clarke_error_grid
 from metrics import calculate_accuracy_metrics
+from models import update_rf_predictions, update_xgb_predictions, update_lstm_predictions, update_graphs, check_and_generate_initial_graphs  # Import the function
 import traceback
 
 
@@ -13,6 +15,7 @@ app = Flask(__name__)
 
 init_db()
 start_background_tasks()
+check_and_generate_initial_graphs()
 
 @app.route('/metrics', methods=['GET'])
 def get_all_metrics():
@@ -154,7 +157,15 @@ def current_glucose():
     elif glucose_level > 150:
         status = 'High'
 
-    return jsonify({'glucose_level': glucose_level, 'status': status})
+    # Ensure trend arrow is correctly fetched
+    arrow = tasks.current_trend_arrow
+    print(f"Accessing trend arrow in Flask endpoint: {arrow}")
+
+    return jsonify({
+        'glucose_level': glucose_level,
+        'status': status,
+        'trend_arrow': arrow
+    })
 
 if __name__ == "__main__":
     app.run(debug=False, port=5000)

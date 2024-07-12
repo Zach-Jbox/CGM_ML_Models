@@ -17,7 +17,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var currentGlucoseTextView: TextView
     private lateinit var statusTextView: TextView
     private val handler = Handler(Looper.getMainLooper())
-    private val updateInterval: Long = 6000 // 1 minute in milliseconds
+    private val updateInterval: Long = 60000  // 1 minute in milliseconds
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,7 +48,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun fetchCurrentGlucose() {
         val url = "https://glucose.dynv6.net/current_glucose"
-
         val request = Request.Builder().url(url).build()
         val client = OkHttpClient()
 
@@ -64,10 +63,11 @@ class MainActivity : AppCompatActivity() {
                         val json = JSONObject(responseData)
                         val glucoseLevel = json.getDouble("glucose_level").toInt()
                         val status = json.getString("status")
+                        val trendArrow = json.getString("trend_arrow")
 
                         runOnUiThread {
-                            currentGlucoseTextView.text = "Current Glucose: $glucoseLevel"
-                            statusTextView.text = "$status"
+                            currentGlucoseTextView.text = "Current Glucose: $glucoseLevel $trendArrow"
+                            statusTextView.text = status
 
                             when (status) {
                                 "High" -> statusTextView.setTextColor(Color.parseColor("#FFA500"))

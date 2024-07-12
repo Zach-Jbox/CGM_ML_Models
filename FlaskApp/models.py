@@ -155,10 +155,15 @@ def generate_initial_graphs():
         lstm_predictions_df = fetch_last_n_entries("LSTM_PREDICTIONS", 288)
         lstm_predictions = lstm_predictions_df['prediction']
 
-        # Generate the graphs with appropriate offsets
-        generate_graph('rf', actual_data[-288:], rf_predictions, 'rf_predictions_vs_actual.png', offset=6)
-        generate_graph('xgb', actual_data[-288:], xgb_predictions, 'xgb_predictions_vs_actual.png', offset=6)
-        generate_graph('lstm', actual_data[-312:], lstm_predictions, 'lstm_predictions_vs_actual.png', offset=24)
+        # Check if there is sufficient data for each graph
+        if len(actual_data) >= 288 and len(rf_predictions) >= 288:
+            generate_graph('rf', actual_data[-288:], rf_predictions, 'rf_predictions_vs_actual.png', offset=6)
+
+        if len(actual_data) >= 288 and len(xgb_predictions) >= 288:
+            generate_graph('xgb', actual_data[-288:], xgb_predictions, 'xgb_predictions_vs_actual.png', offset=6)
+
+        if len(actual_data) >= 312 and len(lstm_predictions) >= 288:
+            generate_graph('lstm', actual_data[-312:], lstm_predictions, 'lstm_predictions_vs_actual.png', offset=24)
 
     except Exception as e:
         print(f"Error generating initial graphs: {e}")
@@ -188,10 +193,15 @@ def update_graphs():
             xgb_predictions = xgb_pred['prediction'].tolist()
             lstm_predictions = lstm_pred['prediction'].tolist()
 
-            # Generate and save the graphs
-            generate_graph('rf', actual_data, rf_predictions, 'rf_predictions_vs_actual.png', offset=6)
-            generate_graph('xgb', actual_data, xgb_predictions, 'xgb_predictions_vs_actual.png', offset=6)
-            generate_graph('lstm', actual_data, lstm_predictions, 'lstm_predictions_vs_actual.png', offset=24)
+            # Check if there is sufficient data for each graph
+            if len(actual_data) >= 288 and len(rf_predictions) >= 288:
+                generate_graph('rf', actual_data[-288:], rf_predictions, 'rf_predictions_vs_actual.png', offset=6)
+
+            if len(actual_data) >= 288 and len(xgb_predictions) >= 288:
+                generate_graph('xgb', actual_data[-288:], xgb_predictions, 'xgb_predictions_vs_actual.png', offset=6)
+
+            if len(actual_data) >= 312 and len(lstm_predictions) >= 288:
+                generate_graph('lstm', actual_data[-312:], lstm_predictions, 'lstm_predictions_vs_actual.png', offset=24)
 
         except Exception as e:
             print(f"Error updating graphs: {e}")
@@ -204,4 +214,4 @@ def check_and_generate_initial_graphs():
         generate_initial_graphs()
 
 # Ensure initial graphs are generated if they don't exist
-check_and_generate_initial_graphs()
+# check_and_generate_initial_graphs()

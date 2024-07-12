@@ -6,6 +6,8 @@ from database import init_db, DATABASE_PATH
 from tasks import start_background_tasks
 from clarke_error_grid_analysis import clarke_error_grid
 from metrics import calculate_accuracy_metrics
+import traceback
+
 
 app = Flask(__name__)
 
@@ -14,34 +16,41 @@ start_background_tasks()
 
 @app.route('/metrics', methods=['GET'])
 def get_all_metrics():
-    conn = sqlite3.connect(DATABASE_PATH)
-    
-    # Fetch data for Random Forest
-    df_rf = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
-    pred_df_rf = pd.read_sql_query("SELECT prediction FROM RF_PREDICTIONS ORDER BY id DESC LIMIT 288", conn)
-    
-    # Fetch data for XGBoost
-    df_xgb = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
-    pred_df_xgb = pd.read_sql_query("SELECT prediction FROM XGB_PREDICTIONS ORDER BY id DESC LIMIT 288", conn)
-    
-    # Fetch data for LSTM
-    df_lstm = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
-    pred_df_lstm = pd.read_sql_query("SELECT prediction FROM LSTM_PREDICTIONS ORDER BY id DESC LIMIT 288", conn)
-    
-    conn.close()
-    
-    if df_rf.empty or pred_df_rf.empty or df_xgb.empty or pred_df_xgb.empty or df_lstm.empty or pred_df_lstm.empty:
-        return jsonify({'error': 'Not enough data for accuracy metrics'})
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        
+        # Fetch data for Random Forest
+        df_rf = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
+        pred_df_rf = pd.read_sql_query("SELECT prediction FROM RF_PREDICTIONS ORDER BY id DESC LIMIT 288", conn)
+        
+        # Fetch data for XGBoost
+        df_xgb = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 288", conn)
+        pred_df_xgb = pd.read_sql_query("SELECT prediction FROM XGB_PREDICTIONS ORDER BY id DESC LIMIT 288", conn)
+        
+        # Fetch data for LSTM
+        df_lstm = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id DESC LIMIT 312", conn)
+        pred_df_lstm = pd.read_sql_query("SELECT prediction FROM LSTM_PREDICTIONS ORDER BY id DESC LIMIT 288", conn)
+        
+        conn.close()
+        
+        # Check if there is sufficient data
+        if df_rf.shape[0] < 288 or pred_df_rf.shape[0] < 288 or df_xgb.shape[0] < 288 or pred_df_xgb.shape[0] < 288 or df_lstm.shape[0] < 312 or pred_df_lstm.shape[0] < 288:
+            return jsonify({'error': 'Not enough data for accuracy metrics'})
 
-    rf_metrics = calculate_accuracy_metrics(df_rf['glucose_level'], pred_df_rf['prediction'])
-    xgb_metrics = calculate_accuracy_metrics(df_xgb['glucose_level'], pred_df_xgb['prediction'])
-    lstm_metrics = calculate_accuracy_metrics(df_lstm['glucose_level'], pred_df_lstm['prediction'])
+        rf_metrics = calculate_accuracy_metrics(df_rf['glucose_level'], pred_df_rf['prediction'])
+        xgb_metrics = calculate_accuracy_metrics(df_xgb['glucose_level'], pred_df_xgb['prediction'])
+        lstm_metrics = calculate_accuracy_metrics(df_lstm['glucose_level'], pred_df_lstm['prediction'])
 
-    return jsonify({
-        'Random Forest': rf_metrics,
-        'XGBoost': xgb_metrics,
-        'LSTM': lstm_metrics
-    })
+        return jsonify({
+            'Random Forest': rf_metrics,
+            'XGBoost': xgb_metrics,
+            'LSTM': lstm_metrics
+        })
+
+    except Exception as e:
+        print(f"Error in /metrics route: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
     
 @app.route('/')
 def home():

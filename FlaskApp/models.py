@@ -32,7 +32,6 @@ def update_rf_predictions():
 
         df['hour'] = df['hour'].astype(int)
         df['minute'] = df['minute'].astype(int)
-        df['date'] = pd.to_datetime(df['date'])
 
         rf_model = RandomForestRegressor(n_estimators=100, random_state=0)
         rf_model.fit(df[['hour', 'minute']], df['glucose_level'])
@@ -40,7 +39,7 @@ def update_rf_predictions():
 
         next_hour = (df['hour'].iloc[-1] + (df['minute'].iloc[-1] + 30) // 60) % 24
         next_minute = (df['minute'].iloc[-1] + 30) % 60
-        next_date = (df['date'].iloc[-1] + pd.Timedelta(minutes=30)).strftime("%Y-%m-%d")
+        next_date = (pd.to_datetime(df['date'].iloc[-1]) + pd.Timedelta(minutes=30)).strftime("%Y-%m-%d")
 
         next_data_point = pd.DataFrame([[next_hour, next_minute]], columns=['hour', 'minute'])
         prediction = rf_model.predict(next_data_point)
@@ -58,7 +57,6 @@ def update_xgb_predictions():
 
         df['hour'] = df['hour'].astype(int)
         df['minute'] = df['minute'].astype(int)
-        df['date'] = pd.to_datetime(df['date'])
 
         X_train, X_test, y_train, y_test = train_test_split(df[['hour', 'minute']], df['glucose_level'], test_size=0.2, random_state=42)
         model = xgb.XGBRegressor()
@@ -67,7 +65,7 @@ def update_xgb_predictions():
 
         next_hour = (df['hour'].iloc[-1] + (df['minute'].iloc[-1] + 30) // 60) % 24
         next_minute = (df['minute'].iloc[-1] + 30) % 60
-        next_date = (df['date'].iloc[-1] + pd.Timedelta(minutes=30)).strftime("%Y-%m-%d")
+        next_date = (pd.to_datetime(df['date'].iloc[-1]) + pd.Timedelta(minutes=30)).strftime("%Y-%m-%d")
 
         next_data_point = pd.DataFrame([[next_hour, next_minute]], columns=['hour', 'minute'])
         prediction = model.predict(next_data_point)
@@ -108,7 +106,7 @@ def update_lstm_predictions():
         last_minute = df['minute'].iloc[-1]
         next_hour = (last_hour + (last_minute + 120) // 60) % 24
         next_minute = (last_minute + 120) % 60
-        next_date = (df['date'].iloc[-1] + pd.Timedelta(minutes=120)).strftime("%Y-%m-%d")
+        next_date = (pd.to_datetime(df['date'].iloc[-1]) + pd.Timedelta(minutes=120)).strftime("%Y-%m-%d")
 
         save_prediction("LSTM_PREDICTIONS", next_date, next_hour, next_minute, rounded_prediction)
         time.sleep(300)
@@ -135,33 +133,75 @@ def create_and_save_lstm_model():
     model_2hours.fit(X_train_2hours, y_train_2hours, epochs=100, batch_size=32, validation_split=0.2)
     model_2hours.save('lstm_model_2hours.h5')
 
+def fetch_last_n_entries(table_name, n):
+    conn = sqlite3.connect(DATABASE_PATH)
+    df = pd.read_sql_query(f"SELECT * FROM {table_name} ORDER BY id DESC LIMIT {n}", conn)
+    df = df.iloc[::-1]  # Reverse to get chronological order
+    conn.close()
+    return df
+
+def generate_initial_graphs():
+    try:
+        # Fetch the data
+        actual_data_df = fetch_last_n_entries("GLUCOSE_READINGS", 312)  # 288 + 24 for LSTM offset
+        actual_data = actual_data_df['glucose_level']
+
+        rf_predictions_df = fetch_last_n_entries("RF_PREDICTIONS", 288)
+        rf_predictions = rf_predictions_df['prediction']
+
+        xgb_predictions_df = fetch_last_n_entries("XGB_PREDICTIONS", 288)
+        xgb_predictions = xgb_predictions_df['prediction']
+
+        lstm_predictions_df = fetch_last_n_entries("LSTM_PREDICTIONS", 288)
+        lstm_predictions = lstm_predictions_df['prediction']
+
+        # Generate the graphs with appropriate offsets
+        generate_graph('rf', actual_data[-288:], rf_predictions, 'rf_predictions_vs_actual.png', offset=6)
+        generate_graph('xgb', actual_data[-288:], xgb_predictions, 'xgb_predictions_vs_actual.png', offset=6)
+        generate_graph('lstm', actual_data[-312:], lstm_predictions, 'lstm_predictions_vs_actual.png', offset=24)
+
+    except Exception as e:
+        print(f"Error generating initial graphs: {e}")
+
 def update_graphs():
     while True:
-        conn = sqlite3.connect(DATABASE_PATH)
+        try:
+            conn = sqlite3.connect(DATABASE_PATH)
+            
+            # Fetch actual data
+            df_actual = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id", conn)
 
-        # Fetch actual data
-        df_actual = pd.read_sql_query("SELECT glucose_level FROM GLUCOSE_READINGS ORDER BY id", conn)
+            # Fetch predictions
+            rf_pred = pd.read_sql_query("SELECT prediction FROM RF_PREDICTIONS ORDER BY id", conn)
+            xgb_pred = pd.read_sql_query("SELECT prediction FROM XGB_PREDICTIONS ORDER BY id", conn)
+            lstm_pred = pd.read_sql_query("SELECT prediction FROM LSTM_PREDICTIONS ORDER BY id", conn)
 
-        # Fetch predictions
-        rf_pred = pd.read_sql_query("SELECT prediction FROM RF_PREDICTIONS ORDER BY id", conn)
-        xgb_pred = pd.read_sql_query("SELECT prediction FROM XGB_PREDICTIONS ORDER BY id", conn)
-        lstm_pred = pd.read_sql_query("SELECT prediction FROM LSTM_PREDICTIONS ORDER BY id", conn)
+            conn.close()
 
-        conn.close()
+            if df_actual.empty or rf_pred.empty or xgb_pred.empty or lstm_pred.empty:
+                time.sleep(300)
+                continue
 
-        if df_actual.empty or rf_pred.empty or xgb_pred.empty or lstm_pred.empty:
-            time.sleep(300)
-            continue
+            # Convert data to lists for plotting
+            actual_data = df_actual['glucose_level'].tolist()
+            rf_predictions = rf_pred['prediction'].tolist()
+            xgb_predictions = xgb_pred['prediction'].tolist()
+            lstm_predictions = lstm_pred['prediction'].tolist()
 
-        # Convert data to lists for plotting
-        actual_data = df_actual['glucose_level'].tolist()
-        rf_predictions = rf_pred['prediction'].tolist()
-        xgb_predictions = xgb_pred['prediction'].tolist()
-        lstm_predictions = lstm_pred['prediction'].tolist()
+            # Generate and save the graphs
+            generate_graph('rf', actual_data, rf_predictions, 'rf_predictions_vs_actual.png', offset=6)
+            generate_graph('xgb', actual_data, xgb_predictions, 'xgb_predictions_vs_actual.png', offset=6)
+            generate_graph('lstm', actual_data, lstm_predictions, 'lstm_predictions_vs_actual.png', offset=24)
 
-        # Generate and save the graphs
-        generate_graph('rf', actual_data, rf_predictions, 'rf_predictions_vs_actual.png')
-        generate_graph('xgb', actual_data, xgb_predictions, 'xgb_predictions_vs_actual.png')
-        generate_graph('lstm', actual_data, lstm_predictions, 'lstm_predictions_vs_actual.png')
+        except Exception as e:
+            print(f"Error updating graphs: {e}")
 
         time.sleep(300)  # Update every 5 minutes
+
+def check_and_generate_initial_graphs():
+    if not os.path.exists('rf_predictions_vs_actual.png') or not os.path.exists('xgb_predictions_vs_actual.png') or not os.path.exists('lstm_predictions_vs_actual.png'):
+        print("Graphs not found. Generating initial graphs...")
+        generate_initial_graphs()
+
+# Ensure initial graphs are generated if they don't exist
+check_and_generate_initial_graphs()
